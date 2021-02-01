@@ -1,0 +1,212 @@
+#include <ros/ros.h>
+#include <std_msgs/UInt16.h>
+#include <sensor_msgs/LaserScan.h>
+#include <boost/asio.hpp>
+#include <bea_microscan/bea_microscan.h>
+
+namespace bea_microscan
+{
+LFCDLaser::LFCDLaser(const std::string& port, uint32_t baud_rate, boost::asio::io_service& io)
+  : port_(port), baud_rate_(baud_rate), shutting_down_(false), serial_(io, port_)
+{
+  serial_.set_option(boost::asio::serial_port_base::baud_rate(921600));
+  serial_.set_option(boost::asio::serial_port_base::character_size(8));
+  serial_.set_option(boost::asio::serial_port_base::parity());
+  serial_.set_option(boost::asio::serial_port_base::stop_bits());
+  boost::array<uint8_t,16>  initarray14 = {0xBE, 0xA0, 0x12, 0x34, 0x01, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7B, 0x17, 0x01, 0x48, 0x02};
+  uint8_t sz = boost::asio::write(serial_, boost::asio::buffer(initarray14));
+  if(sz!=16)
+  {
+    ROS_INFO("saddly, unable to init.");
+  //  ROS_ERROR("Unable to write all data.");
+  }else{
+
+    ROS_INFO("I have wrote data.");
+  }
+  if(serial_.is_open())
+  {
+    ROS_INFO("the serial port is open");
+  }
+}
+
+LFCDLaser::~LFCDLaser()
+{
+  
+}
+
+void LFCDLaser::start()
+{
+  boost::array<uint8_t,16>  initarray14 = {0xBE, 0xA0, 0x12, 0x34, 0x01, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7B, 0x17, 0x01, 0x48, 0x02};
+  uint8_t sz = boost::asio::write(serial_, boost::asio::buffer(initarray14));
+  if(sz!=16)
+  {
+    ROS_INFO("saddly, unable to init.");
+  }else{
+    ROS_INFO("I have wrote data.");
+  }
+}
+void LFCDLaser::poll(sensor_msgs::LaserScan::Ptr scan)
+{
+  uint8_t temp_char;
+  uint8_t start_count = 0;
+  bool got_scan = false;
+  boost::array<uint8_t, 1008> raw_bytes;
+  uint8_t good_sets = 0;
+  uint32_t motor_speed = 0;
+  //rpms=1000;
+  int index;
+
+  ROS_INFO("start poll's loop");
+  
+  while (!shutting_down_ && !got_scan)
+  {
+    // Wait until first data sync of frame: 0xFA, 0xA0
+    //ROS_INFO("Start to read data");
+    boost::asio::read(serial_, boost::asio::buffer(&raw_bytes[start_count], 1008));
+    
+    if((raw_bytes[0]==0xbe) && (raw_bytes[1]==0xa0) && (raw_bytes[2]==0x12) && (raw_bytes[3]==0x34))
+    {
+      got_scan = true;
+      
+      scan->angle_increment = (2.0*M_PI/360.0)*90.0/100.0;
+      scan->angle_min = 0.0;
+      scan->angle_max = 90.0*M_PI/180.0 - scan->angle_increment;
+      scan->range_min = 0.0;
+      scan->range_max = 10.0;
+      scan->ranges.resize(100);
+      scan->intensities.resize(100);
+      scan->time_increment = 1000.0/1e8;
+
+      // fill distance data
+      for(uint16_t i = 0; i < 100; i++)
+      {
+        uint16_t range = (((uint16_t)raw_bytes[48+2*i+1] * 256 + (uint16_t)raw_bytes[48+2*i]) & 0x7FF) * 10;
+        uint16_t intensity = (uint16_t)(raw_bytes[48+2*i+1]>>5) * 128;
+        scan->ranges[i] = range/1000.0;
+        scan->intensities[i] = intensity;
+      }
+    }
+#if 0
+    if(start_count == 0)
+    {
+      if(raw_bytes[start_count] == 0xBE)
+      {
+        start_count = 1;
+      }else{
+        ROS_INFO("read the first data:");
+        ROS_INFO(raw_bytes[0]);
+      }
+    }else if(start_count == 1)
+    {
+      if(raw_bytes[start_count] == 0xA0)
+      {
+        start_count = 2;
+      }else{
+        start_count = 0;
+      }
+    }else if(start_count == 2)
+    {
+      if(raw_bytes[start_count] == 0x12)
+      {
+        start_count = 3;
+      }else{
+        start_count = 0;
+      }
+    }else if(start_count == 3)
+    {
+      if(raw_bytes[start_count] == 0x34)
+      {
+        //ROS_INFO("Going to find header");
+    //if(raw_bytes[0]==0xBE && raw_bytes[1]==0xA0 && raw_bytes[2]==0x12 && raw_bytes[3]==0x34)
+    //{
+        ROS_INFO("Header has been found.");
+      
+    
+        start_count = 0;
+        got_scan = true;
+
+        boost::asio::read(serial_,boost::asio::buffer(&raw_bytes[4],1004));
+        scan->angle_increment = (2.0*M_PI/360.0)*90.0/100.0;
+        scan->angle_min = 0.0;
+        scan->angle_max = 90.0*M_PI/180.0 - scan->angle_increment;
+        scan->range_min = 0.0;
+        scan->range_max = 10.0;
+        scan->ranges.resize(100);
+        scan->intensities.resize(100);
+        scan->time_increment = 1000.0/1e8;
+
+        // fill distance data
+        for(uint16_t i = 0; i < 100; i++)
+        {
+          uint16_t range = (((uint16_t)raw_bytes[48+2*i+1] * 256 + (uint16_t)raw_bytes[48+2*i]) & 0x7FF) * 10;
+          uint16_t intensity = (uint16_t)(raw_bytes[48+2*i+1]>>5) * 128;
+          scan->ranges[i] = range/1000.0;
+          scan->intensities[i] = intensity;
+        }
+
+      //else
+      //{
+      //  start_count = 0;
+      //} 
+      }
+      else
+      {
+        start_count = 0;
+      }
+    }
+#endif
+  }
+}
+}
+
+int main(int argc, char **argv)
+{
+  ros::init(argc, argv, "bea_microscan_publisher");
+  ros::NodeHandle n;
+  ros::NodeHandle priv_nh("~");
+
+  std::string port;
+  int baud_rate;
+  std::string frame_id;
+
+  //std_msgs::UInt16 rpms;
+
+  priv_nh.param("port", port, std::string("/dev/ttyUSB1"));
+  priv_nh.param("baud_rate", baud_rate, 921600);
+  priv_nh.param("frame_id", frame_id, std::string("laser"));
+
+  boost::asio::io_service io;
+
+  try
+  {
+    bea_microscan::LFCDLaser laser(port, baud_rate, io);
+    //laser.start();
+    ros::Publisher laser_pub = n.advertise<sensor_msgs::LaserScan>("scan", 1000);
+    ROS_INFO("I am going to try");
+    while (ros::ok())
+    {
+      //ROS_INFO("main:define scan msg");
+      sensor_msgs::LaserScan::Ptr scan(new sensor_msgs::LaserScan);
+      //ROS_INFO("main:set frame id");
+      scan->header.frame_id = frame_id;
+      //ROS_INFO("main: start poll");
+      laser.poll(scan);
+      //ROS_INFO("main:set header stamp");
+      scan->header.stamp = ros::Time::now();
+      //rpms.data=laser.rpms;
+      //ROS_INFO("main:publish topic");
+      laser_pub.publish(scan);
+      //ROS_INFO("I am running");
+      //print("I am running"); 
+    }
+    ROS_INFO("i am out of wile ros ok");
+    laser.close();
+
+    return 0;
+  }
+  catch (boost::system::system_error ex)
+  {
+    ROS_ERROR("An exception was thrown: %s", ex.what());
+    return -1;
+  }
+}

@@ -1,0 +1,8 @@
+prefix=/home/ubuntu/catkin_ws/install
+
+Name: bea_microscan
+Description: Description of bea_microscan
+Version: 0.0.0
+Cflags: -I/home/ubuntu/catkin_ws/install/include -I/usr/include
+Libs: -L/home/ubuntu/catkin_ws/install/lib /usr/lib/arm-linux-gnueabihf/libboost_system.so
+Requires: roscpp rospy std_msgs
